@@ -1,4 +1,4 @@
-# Dazzle Async Redis Driver
+# Dazzle Async MySQL Driver
 
 [![Build Status](https://travis-ci.org/dazzle-php/mysql.svg)](https://travis-ci.org/dazzle-php/mysql)
 [![Code Coverage](https://scrutinizer-ci.com/g/dazzle-php/mysql/badges/coverage.png?b=master)](https://scrutinizer-ci.com/g/dazzle-php/mysql/?branch=master)
