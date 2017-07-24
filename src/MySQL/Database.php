@@ -176,13 +176,17 @@ class Database extends BaseEventEmitter implements DatabaseInterface
         $this->doCommand($command);
 
         $command->on('results', function ($rows, $command) use ($promise) {
-            return $promise->resolve($command);
+            return $command->hasError()
+                ? $promise->reject($command->getError())
+                : $promise->resolve($command);
         });
         $command->on('error', function ($err, $command) use ($promise) {
             return $promise->reject($err);
         });
         $command->on('success', function ($command) use ($promise) {
-            return $promise->resolve($command);
+            return $command->hasError()
+                ? $promise->reject($command->getError())
+                : $promise->resolve($command);
         });
 
         return $promise;
