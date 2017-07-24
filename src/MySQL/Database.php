@@ -99,46 +99,44 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      */
     public function start()
     {
-        $this->state = self::STATE_CONNECT_PENDING;
-        $options = $this->config;
-        $streamRef = $this->stream;
-        $args = func_get_args();
+        return new Promise(function($resolve, $reject) {
 
-        if (!$args) {
-            throw new Exception('Not Implemented');
-        }
+            $this->state = self::STATE_CONNECT_PENDING;
+            $options = $this->config;
+            $streamRef = $this->stream;
 
-        $errorHandler = function ($reason) use ($args) {
-            $this->state = self::STATE_AUTH_FAILED;
-            $args[0]($reason, $this);
-        };
+            $errorHandler = function ($reason) use ($reject) {
+                $this->state = self::STATE_AUTH_FAILED;
+                return $reject($reason);
+            };
 
-        $connectedHandler = function ($serverOptions) use ($args) {
-            $this->state = self::STATE_AUTH_SUCCEEDED;
-            $this->serverOptions = $serverOptions;
-            $args[0](null, $this);
-        };
+            $connectedHandler = function ($serverOptions) use ($resolve) {
+                $this->state = self::STATE_AUTH_SUCCEEDED;
+                $this->serverOptions = $serverOptions;
+                return $resolve($serverOptions);
+            };
 
-        $this
-            ->connect()
-            ->then(function ($stream) use (&$streamRef, $options, $errorHandler, $connectedHandler) {
-                $streamRef = $stream;
+            $this
+                ->connect()
+                ->then(function ($stream) use (&$streamRef, $options, $errorHandler, $connectedHandler) {
+                    $streamRef = $stream;
 
-                $stream->on('error', [ $this, 'handleConnectionError' ]);
-                $stream->on('close', [ $this, 'handleConnectionClosed' ]);
+                    $stream->on('error', [ $this, 'handleConnectionError' ]);
+                    $stream->on('close', [ $this, 'handleConnectionClosed' ]);
 
-                $parser = $this->parser = new ProtocolParser($stream, $this->executor);
+                    $parser = $this->parser = new ProtocolParser($stream, $this->executor);
 
-                $parser->setOptions($options);
+                    $parser->setOptions($options);
 
-                $command = $this->doCommand(new AuthCommand($this));
-                $command->on('authenticated', $connectedHandler);
-                $command->on('error', $errorHandler);
+                    $command = $this->doCommand(new AuthCommand($this));
+                    $command->on('authenticated', $connectedHandler);
+                    $command->on('error', $errorHandler);
 
-                //$parser->on('close', $closeHandler);
-                $parser->start();
+                    //$parser->on('close', $closeHandler);
+                    $parser->start();
 
-            }, [ $this, 'handleConnectionError' ]);
+                }, [ $this, 'handleConnectionError' ]);
+        });
     }
 
     /**
@@ -147,73 +145,59 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      */
     public function stop()
     {
-        $this
-            ->doCommand(new QuitCommand($this))
-            ->on('success', function() {
-                $this->state = self::STATE_STOPPED;
-                $this->emit('end', [ $this ]);
-                $this->emit('close', [ $this ]);
-            });
-        $this->state = self::STATE_CLOSEING;
+        return new Promise(function($resolve, $reject) {
+            $this
+                ->doCommand(new QuitCommand($this))
+                ->on('success', function() use($resolve) {
+                    $this->state = self::STATE_STOPPED;
+                    $this->emit('end', [ $this ]);
+                    $this->emit('close', [ $this ]);
+                    $resolve($this);
+                });
+            $this->state = self::STATE_CLOSEING;
+        });
     }
 
     /**
      * Do a async query.
+     *
+     * @param string $sql
+     * @param mixed[] $sqlParams
+     * @return PromiseInterface
      */
-    public function query()
+    public function query($sql, $sqlParams = [])
     {
-        $numArgs = func_num_args();
-
-        if ($numArgs === 0)
-        {
-            throw new InvalidArgumentException('Required at least 1 argument');
-        }
-
-        $args = func_get_args();
-        $query = new Query(array_shift($args));
-
-        $callback = array_pop($args);
-
+        $promise = new Promise();
+        $query   = new Query($sql);
         $command = new QueryCommand($this);
         $command->setQuery($query);
 
-        if (!is_callable($callback))
-        {
-            if ($numArgs > 1)
-            {
-                $args[] = $callback;
-            }
-            $query->bindParamsFromArray($args);
-
-            return $this->doCommand($command);
-        }
-
-        $query->bindParamsFromArray($args);
+        $query->bindParamsFromArray($sqlParams);
         $this->doCommand($command);
 
-        $command->on('results', function ($rows, $command) use ($callback) {
-            $callback($command, $this);
+        $command->on('results', function ($rows, $command) use ($promise) {
+            return $promise->resolve($command);
         });
-        $command->on('error', function ($err, $command) use ($callback) {
-            $callback($command, $this);
+        $command->on('error', function ($err, $command) use ($promise) {
+            return $promise->reject($err);
         });
-        $command->on('success', function ($command) use ($callback) {
-            $callback($command, $this);
+        $command->on('success', function ($command) use ($promise) {
+            return $promise->resolve($command);
         });
+
+        return $promise;
     }
 
-    public function ping($callback)
+    public function ping()
     {
-        if (!is_callable($callback))
-        {
-            throw new InvalidArgumentException('Callback is not a valid callable');
-        }
+        $promise = new Promise();
+
         $this->doCommand(new PingCommand($this))
-            ->on('error', function ($reason) use ($callback) {
-                $callback($reason, $this);
+            ->on('error', function ($reason) use ($promise) {
+                return $promise->reject($reason);
             })
-            ->on('success', function () use ($callback) {
-                $callback(null, $this);
+            ->on('success', function () use ($promise) {
+                return $promise->resolve();
             });
     }
 
