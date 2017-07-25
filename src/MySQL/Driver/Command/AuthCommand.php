@@ -1,8 +1,8 @@
 <?php
 
-namespace Dazzle\MySQL\Command\Concrete;
+namespace Dazzle\MySQL\Driver\Command;
 
-use Dazzle\MySQL\Command\Command;
+use Dazzle\MySQL\Driver\Command;
 
 class AuthCommand extends Command
 {

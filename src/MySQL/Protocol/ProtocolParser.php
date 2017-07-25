@@ -4,7 +4,9 @@ namespace Dazzle\MySQL\Protocol;
 
 use BinPHP\BinSupport;
 use Dazzle\Event\BaseEventEmitter;
-use Dazzle\MySQL\Command\Command;
+use Dazzle\MySQL\Driver\Command;
+use Dazzle\MySQL\Driver\CommandInterface;
+use Dazzle\MySQL\Driver\Executor;
 use Dazzle\Stream\StreamInterface;
 use Exception;
 
@@ -27,7 +29,7 @@ class ProtocolParser extends BaseEventEmitter
     protected $dbname   = '';
 
     /**
-     * @var \Dazzle\MySQL\Command\Command
+     * @var CommandInterface
      */
     protected $currCommand;
 
@@ -78,7 +80,7 @@ class ProtocolParser extends BaseEventEmitter
      */
     protected $stream;
     /**
-     * @var \Dazzle\MySQL\Executor
+     * @var Executor
      */
     protected $executor;
 

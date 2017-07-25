@@ -2,7 +2,7 @@
 
 namespace Dazzle\MySQL;
 
-class Query
+class Query implements QueryInterface
 {
     /**
      * @var string
