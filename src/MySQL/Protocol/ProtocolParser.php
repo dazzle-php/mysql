@@ -2,9 +2,9 @@
 
 namespace Dazzle\MySQL\Protocol;
 
+use BinPHP\BinSupport;
 use Dazzle\Event\BaseEventEmitter;
 use Dazzle\MySQL\Command\Command;
-use Dazzle\MySQL\Protocol\Support\BinarySupport;
 use Dazzle\Stream\StreamInterface;
 use Exception;
 
@@ -138,7 +138,7 @@ packet:
                 return;
             }
 
-            $this->pctSize = BinarySupport::bytes2int($this->read(3), true);
+            $this->pctSize = BinSupport::bytes2int($this->read(3), true);
             $this->state = self::STATE_BODY;
             $this->seq = ord($this->read(1)) + 1;
         }
@@ -182,11 +182,11 @@ packet:
             $options = &$this->connectOptions;
 
             $options['serverVersion'] = $this->read($p, 1);
-            $options['threadId']      = BinarySupport::bytes2int($this->read(4), true);
+            $options['threadId']      = BinSupport::bytes2int($this->read(4), true);
             $this->scramble           = $this->read(8, 1);
-            $options['ServerCaps']    = BinarySupport::bytes2int($this->read(2), true);
+            $options['ServerCaps']    = BinSupport::bytes2int($this->read(2), true);
             $options['serverLang']    = ord($this->read(1));
-            $options['serverStatus']  = BinarySupport::bytes2int($this->read(2, 13), true);
+            $options['serverStatus']  = BinSupport::bytes2int($this->read(2, 13), true);
             $restScramble             = $this->read(12, 1);
             $this->scramble          .= $restScramble;
 
@@ -219,8 +219,8 @@ field:
                     $isAuthenticated = true;
                 }
 
-                $this->affectedRows = $this->parseEncodedBinarySupport();
-                $this->insertId     = $this->parseEncodedBinarySupport();
+                $this->affectedRows = $this->parseEncodedBinSupport();
+                $this->insertId     = $this->parseEncodedBinSupport();
 
                 $u                  = unpack('v', $this->read(2));
                 $this->serverStatus = $u[1];
@@ -268,7 +268,7 @@ field:
                 if ($this->rsState === self::RS_STATE_HEADER)
                 {
                     $this->debug('Header packet of Data packet');
-                    $extra = $this->parseEncodedBinarySupport();
+                    $extra = $this->parseEncodedBinSupport();
                     //var_dump($extra);
                     $this->rsState = self::RS_STATE_FIELD;
                 }
@@ -474,15 +474,15 @@ field:
         }
         $token = sha1($scramble . sha1($hash1 = sha1($password, true), true), true) ^ $hash1;
 
-        return $this->buildLenEncodedBinarySupport($token);
+        return $this->buildLenEncodedBinSupport($token);
     }
 
     /**
-     * Builds length-encoded BinarySupport string
+     * Builds length-encoded BinSupport string
      * @param string String
-     * @return string Resulting BinarySupport string
+     * @return string Resulting BinSupport string
      */
-    public function buildLenEncodedBinarySupport($s)
+    public function buildLenEncodedBinSupport($s)
     {
         if ($s === null)
         {
@@ -498,22 +498,22 @@ field:
 
         if ($l <= 0xFFFF)
         {
-            return "\252" . BinarySupport::int2bytes(2, true) . $s;
+            return "\252" . BinSupport::int2bytes(2, true) . $s;
         }
 
         if ($l <= 0xFFFFFF)
         {
-            return "\254" . BinarySupport::int2bytes(3, true) . $s;
+            return "\254" . BinSupport::int2bytes(3, true) . $s;
         }
 
-        return BinarySupport::int2bytes(8, $l, true) . $s;
+        return BinSupport::int2bytes(8, $l, true) . $s;
     }
 
     /**
-     * Parses length-encoded BinarySupport integer
+     * Parses length-encoded BinSupport integer
      * @return integer Result
      */
-    public function parseEncodedBinarySupport()
+    public function parseEncodedBinSupport()
     {
         $f = ord($this->read(1));
         if ($f <= 250)
@@ -530,14 +530,14 @@ field:
         }
         if ($f === 252)
         {
-            return BinarySupport::bytes2int($this->read(2), true);
+            return BinSupport::bytes2int($this->read(2), true);
         }
         if ($f === 253)
         {
-            return BinarySupport::bytes2int($this->read(3), true);
+            return BinSupport::bytes2int($this->read(3), true);
         }
 
-        return BinarySupport::bytes2int($this->read(8), true);
+        return BinSupport::bytes2int($this->read(8), true);
     }
 
     /**
@@ -546,7 +546,7 @@ field:
      */
     public function parseEncodedString()
     {
-        $l = $this->parseEncodedBinarySupport();
+        $l = $this->parseEncodedBinSupport();
         if (($l === null) || ($l === false))
         {
             return $l;
@@ -557,7 +557,7 @@ field:
 
     public function sendPacket($packet)
     {
-        return $this->stream->write(BinarySupport::int2bytes(3, strlen($packet), true) . chr($this->seq++) . $packet);
+        return $this->stream->write(BinSupport::int2bytes(3, strlen($packet), true) . chr($this->seq++) . $packet);
     }
 
     protected function nextRequest($isHandshake = false)

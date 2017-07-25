@@ -21,6 +21,7 @@
     ],
     "require": {
         "php": ">=5.6.7",
+        "binphp/binphp": "0.1.*",
         "dazzle-php/event": "0.5.*",
         "dazzle-php/loop": "0.5.*",
         "dazzle-php/promise": "0.5.*",
