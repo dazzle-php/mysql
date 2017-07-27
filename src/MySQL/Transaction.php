@@ -81,7 +81,9 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
      */
     public function execute($sql, $sqlParams = [])
     {
-        // TODO: Implement execute() method.
+        return $this->query($sql, $sqlParams)->then(function($command) {
+            return $command->affectedRows;
+        });
     }
 
     /**
