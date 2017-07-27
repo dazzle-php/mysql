@@ -4,7 +4,7 @@ namespace Dazzle\MySQL;
 
 use Dazzle\Promise\PromiseInterface;
 
-interface SQLInterface
+interface SQLClientInterface
 {
     /**
      * Execute an async query.
@@ -24,3 +24,4 @@ interface SQLInterface
      */
     public function execute($sql, $sqlParams = []);
 }
+

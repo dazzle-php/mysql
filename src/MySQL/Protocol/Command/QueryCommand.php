@@ -4,9 +4,9 @@ namespace Dazzle\MySQL\Protocol\Command;
 
 use Dazzle\MySQL\Protocol\Command;
 use Dazzle\MySQL\Protocol\QueryInterface;
-use Dazzle\MySQL\SQLQueryInterface;
+use Dazzle\MySQL\SQLResultInterface;
 
-class QueryCommand extends Command implements SQLQueryInterface
+class QueryCommand extends Command implements SQLResultInterface
 {
     public $query;
     public $fields;

@@ -2,7 +2,7 @@
 
 namespace Dazzle\MySQL;
 
-interface SQLQueryInterface
+interface SQLResultInterface
 {
     /**
      * Get returned rows.
