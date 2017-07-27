@@ -6,26 +6,73 @@ use BinPHP\BinSupport;
 use Dazzle\Event\BaseEventEmitter;
 use Dazzle\MySQL\Protocol\Command;
 use Dazzle\MySQL\Protocol\CommandInterface;
-use Dazzle\MySQL\Support\Executor\Executor;
+use Dazzle\MySQL\Support\Queue\Queue;
+use Dazzle\MySQL\Support\Queue\QueueInterface;
+use Dazzle\Socket\SocketInterface;
 use Dazzle\Stream\StreamInterface;
 use Exception;
+use SplQueue;
 
 class ProtocolParser extends BaseEventEmitter
 {
-    const PHASE_GOT_INIT   = 1;
+    /**
+     * @var int
+     */
+    const PHASE_INIT       = 1;
+
+    /**
+     * @var int
+     */
     const PHASE_AUTH_SENT  = 2;
+
+    /**
+     * @var int
+     */
     const PHASE_AUTH_ERR   = 3;
+
+    /**
+     * @var int
+     */
     const PHASE_HANDSHAKED = 4;
 
-    const RS_STATE_HEADER = 0;
-    const RS_STATE_FIELD  = 1;
-    const RS_STATE_ROW    = 2;
+    /**
+     * @var int
+     */
+    const RS_STATE_HEADER  = 0;
 
+    /**
+     * @var int
+     */
+    const RS_STATE_FIELD   = 1;
+
+    /**
+     * @var int
+     */
+    const RS_STATE_ROW     = 2;
+
+    /**
+     * @var int
+     */
     const STATE_STANDBY = 0;
+
+    /**
+     * @var int
+     */
     const STATE_BODY    = 1;
 
+    /**
+     * @var string
+     */
     protected $user     = 'root';
+
+    /**
+     * @var string
+     */
     protected $pass     = '';
+
+    /**
+     * @var string
+     */
     protected $dbname   = '';
 
     /**
@@ -47,7 +94,7 @@ class ProtocolParser extends BaseEventEmitter
 
     protected $maxPacketSize = 0x1000000;
 
-    public $charsetNumber = 0x21;
+    protected $charsetNumber = 0x21;
 
     protected $serverVersion;
     protected $threadId;
@@ -79,19 +126,29 @@ class ProtocolParser extends BaseEventEmitter
      * @var StreamInterface
      */
     protected $stream;
+
     /**
-     * @var Executor
+     * @var QueueInterface
      */
     protected $executor;
 
+    /**
+     * @var SplQueue
+     */
     protected $queue;
 
-    public function __construct($stream, $executor)
+    /**
+     * @param SocketInterface $stream
+     * @param QueueInterface $executor
+     * @param mixed[] $config
+     */
+    public function __construct(SocketInterface $stream, QueueInterface $executor, $config = [])
     {
         $this->stream   = $stream;
         $this->executor = $executor;
-        $this->queue    = new \SplQueue($this);
-        $executor->on('new', array($this, 'handleNewCommand'));
+        $this->queue    = new SplQueue($this);
+        $this->configure($config);
+        $executor->on('new', [ $this, 'handleNewCommand' ]);
     }
 
     public function start()
@@ -102,7 +159,7 @@ class ProtocolParser extends BaseEventEmitter
 
     public function handleNewCommand()
     {
-        if ($this->queue->count() <= 0)
+        if ($this->queue->isEmpty())
         {
             $this->nextRequest();
         }
@@ -115,17 +172,6 @@ class ProtocolParser extends BaseEventEmitter
             $bt = debug_backtrace();
             $caller = array_shift($bt);
             printf("[DEBUG] <%s:%d> %s\n", $caller['class'], $caller['line'], $message);
-        }
-    }
-
-    public function setOptions($options)
-    {
-        foreach ($options as $option => $value)
-        {
-            if (property_exists($this, $option))
-            {
-                $this->$option = $value;
-            }
         }
     }
 
@@ -157,7 +203,7 @@ packet:
 
         if ($this->phase === 0)
         {
-            $this->phase = self::PHASE_GOT_INIT;
+            $this->phase = self::PHASE_INIT;
             $this->protocalVersion = ord($this->read(1));
             $this->debug(sprintf("Protocol Version: %d", $this->protocalVersion));
             if ($this->protocalVersion === 0xFF)
@@ -169,7 +215,7 @@ packet:
                 $this->rsState = self::RS_STATE_HEADER;
                 $this->resultFields = [];
                 $this->resultRows = [];
-                if ($this->phase === self::PHASE_AUTH_SENT || $this->phase === self::PHASE_GOT_INIT)
+                if ($this->phase === self::PHASE_AUTH_SENT || $this->phase === self::PHASE_INIT)
                 {
                     $this->phase = self::PHASE_AUTH_ERR;
                 }
@@ -312,7 +358,7 @@ field:
                     }
                     $this->resultRows[] = $row;
                     $command = $this->queue->dequeue();
-                    $command->emit('result', array($row, $command, $command->getConnection()));
+                    //$command->emit('success', [ $command, [ $row ] ]);
                     $this->queue->unshift($command);
                 }
             }
@@ -326,7 +372,7 @@ field:
         $command = $this->queue->dequeue();
         $error = new Exception($this->errmsg, $this->errno);
         $command->setError($error);
-        $command->emit('error', array($error, $command, $command->getConnection()));
+        $command->emit('error', [ $command, $error ]);
         $this->errmsg = '';
         $this->errno  = 0;
     }
@@ -334,10 +380,11 @@ field:
     protected function onResultDone()
     {
         $command = $this->queue->dequeue();
+
         $command->resultRows   = $this->resultRows;
         $command->resultFields = $this->resultFields;
-        $command->emit('results', array($this->resultRows, $command, $command->getConnection()));
-        $command->emit('end', array($command, $command->getConnection()));
+
+        $command->emit('success', [ $command, $this->resultRows ]);
 
         $this->rsState      = self::RS_STATE_HEADER;
         $this->resultRows   = $this->resultFields = [];
@@ -346,20 +393,19 @@ field:
     protected function onSuccess()
     {
         $command = $this->queue->dequeue();
-        if ($command->equals(Command::QUERY))
-        {
-            $command->affectedRows = $this->affectedRows;
-            $command->insertId     = $this->insertId;
-            $command->warnCount    = $this->warnCount;
-            $command->message      = $this->message;
-        }
-        $command->emit('success', array($command, $command->getConnection()));
+
+        $command->affectedRows = $this->affectedRows;
+        $command->insertId     = $this->insertId;
+        $command->warnCount    = $this->warnCount;
+        $command->message      = $this->message;
+
+        $command->emit('success', [ $command ]);
     }
 
     protected function onAuthenticated()
     {
         $command = $this->queue->dequeue();
-        $command->emit('authenticated', array($this->connectOptions));
+        $command->emit('success', [ $command, $this->connectOptions ]);
     }
 
     protected function handleClose()
@@ -370,12 +416,10 @@ field:
             $command = $this->queue->dequeue();
             if ($command->equals(Command::QUIT))
             {
-                $command->emit('success');
+                $command->emit('success', [ $command ]);
             }
         }
     }
-
-    /* begin of buffer operation APIs */
 
     public function append($str)
     {
@@ -411,7 +455,7 @@ field:
 
     public function restBuffer($len)
     {
-        if(strlen($this->buffer) === ($this->bufferPos+$len))
+        if (strlen($this->buffer) === ($this->bufferPos+$len))
         {
             $this->buffer = '';
         }
@@ -440,7 +484,7 @@ field:
 
     public function authenticate()
     {
-        if ($this->phase !== self::PHASE_GOT_INIT)
+        if ($this->phase !== self::PHASE_INIT)
         {
             return;
         }
@@ -557,21 +601,34 @@ field:
         return $this->read($l);
     }
 
-    public function sendPacket($packet)
+    /**
+     * Send packet to the server.
+     *
+     * @param string $packet
+     * @return bool
+     */
+    protected function sendPacket($packet)
     {
         return $this->stream->write(BinSupport::int2bytes(3, strlen($packet), true) . chr($this->seq++) . $packet);
     }
 
+    /**
+     * Parse next request.
+     *
+     * @param bool $isHandshake
+     * @return bool
+     */
     protected function nextRequest($isHandshake = false)
     {
         if (!$isHandshake && $this->phase != self::PHASE_HANDSHAKED)
         {
             return false;
         }
-        if (!$this->executor->isIdle())
+        if (!$this->executor->isEmpty())
         {
             $command = $this->executor->dequeue();
             $this->queue->enqueue($command);
+
             if ($command->equals(Command::INIT_AUTHENTICATE))
             {
                 $this->authenticate();
@@ -579,10 +636,26 @@ field:
             else
             {
                 $this->seq = 0;
-                $this->sendPacket(chr($command->getID()) . $command->getSql());
+                $this->sendPacket(chr($command->getID()) . $command->getSQL());
             }
         }
 
         return true;
+    }
+
+    /**
+     * Configure protocol parser.
+     *
+     * @param mixed[] $options
+     */
+    protected function configure($options)
+    {
+        foreach ($options as $option => $value)
+        {
+            if (property_exists($this, $option))
+            {
+                $this->$option = $value;
+            }
+        }
     }
 }

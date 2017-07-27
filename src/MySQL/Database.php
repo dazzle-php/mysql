@@ -12,40 +12,87 @@ use Dazzle\MySQL\Protocol\Command\QuitCommand;
 use Dazzle\MySQL\Protocol\Command;
 use Dazzle\MySQL\Protocol\CommandInterface;
 use Dazzle\MySQL\Protocol\ProtocolParser;
-use Dazzle\MySQL\Support\Executor\Executor;
+use Dazzle\MySQL\Protocol\Query;
+use Dazzle\MySQL\Protocol\QueryInterface;
+use Dazzle\MySQL\Support\Queue\Queue;
+use Dazzle\MySQL\Support\Queue\QueueInterface;
 use Dazzle\MySQL\Support\Transaction\TransactionBox;
 use Dazzle\MySQL\Support\Transaction\TransactionBoxInterface;
 use Dazzle\Promise\Promise;
 use Dazzle\Promise\PromiseInterface;
 use Dazzle\Socket\Socket;
 use Dazzle\Socket\SocketInterface;
-use Exception;
-use InvalidArgumentException;
+use Dazzle\Throwable\Exception\Runtime\ExecutionException;
 use RuntimeException;
 
 class Database extends BaseEventEmitter implements DatabaseInterface
 {
     use LoopAwareTrait;
 
-    const STATE_INIT                = 0;
-    const STATE_CONNECT_PENDING     = 3;
-    const STATE_CONNECT_FAILED      = 1;
-    const STATE_CONNECT_SUCCEEDED   = 4;
-    const STATE_AUTH_PENDING        = 8;
-    const STATE_AUTH_FAILED         = 2;
-    const STATE_AUTH_SUCCEEDED      = 5;
-    const STATE_CLOSEING            = 6;
-    const STATE_STOPPED             = 7;
+    /**
+     * @var int
+     */
+    const STATE_INIT                 = 0;
 
+    /**
+     * @var int
+     */
+    const STATE_CONNECT_PENDING      = 4;
+
+    /**
+     * @var int
+     */
+    const STATE_CONNECT_FAILED       = 2;
+
+    /**
+     * @var int
+     */
+    const STATE_CONNECT_SUCCEEDED    = 6;
+
+    /**
+     * @var int
+     */
+    const STATE_AUTH_PENDING         = 5;
+
+    /**
+     * @var int
+     */
+    const STATE_AUTH_FAILED          = 3;
+
+    /**
+     * @var int
+     */
+    const STATE_AUTH_SUCCEEDED       = 7;
+
+    /**
+     * @var int
+     */
+    const STATE_DISCONNECT_PENDING   = 8;
+
+    /**
+     * @var int
+     */
+    const STATE_DISCONNECT_SUCCEEDED = 1;
+
+    /**
+     * @var mixed[]
+     */
     protected $config;
 
-    protected $serverOptions;
+    /**
+     * @var mixed[]
+     */
+    protected $serverInfo;
 
+    /**
+     * @var int
+     */
     protected $state;
 
-    protected $mode;
-
-    protected $executor;
+    /**
+     * @var Queue|QueueInterface
+     */
+    protected $queue;
 
     protected $parser;
 
@@ -61,9 +108,9 @@ class Database extends BaseEventEmitter implements DatabaseInterface
     {
         $this->loop = $loop;
         $this->config = $this->createConfig($config);
-        $this->serverOptions = [];
+        $this->serverInfo = [];
         $this->state = self::STATE_INIT;
-        $this->executor = $this->createExecutor();
+        $this->queue = $this->createQueue();
         $this->parser = null;
         $this->stream = null;
         $this->trans = $this->createTransactionBox();
@@ -76,6 +123,7 @@ class Database extends BaseEventEmitter implements DatabaseInterface
     public function isPaused()
     {
         // TODO
+        return false;
     }
 
     /**
@@ -102,7 +150,7 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      */
     public function isStarted()
     {
-        // TODO
+        return $this->state >= self::STATE_CONNECT_PENDING;
     }
 
     /**
@@ -111,44 +159,48 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      */
     public function start()
     {
-        return new Promise(function($resolve, $reject) {
+        if ($this->isStarted())
+        {
+            return Promise::doResolve($this);
+        }
 
-            $this->state = self::STATE_CONNECT_PENDING;
-            $options = $this->config;
-            $streamRef = $this->stream;
+        $promise = new Promise();
 
-            $errorHandler = function ($reason) use ($reject) {
-                $this->state = self::STATE_AUTH_FAILED;
-                return $reject($reason);
-            };
+        $this->state = self::STATE_CONNECT_PENDING;
+        $config = $this->config;
 
-            $connectedHandler = function ($serverOptions) use ($resolve) {
-                $this->state = self::STATE_AUTH_SUCCEEDED;
-                $this->serverOptions = $serverOptions;
-                return $resolve($serverOptions);
-            };
+        $errorHandler = function ($command, $reason) use ($promise) {
+            $this->state = self::STATE_AUTH_FAILED;
+            return $promise->reject($reason);
+        };
 
-            $this
-                ->connect()
-                ->then(function ($stream) use (&$streamRef, $options, $errorHandler, $connectedHandler) {
-                    $streamRef = $stream;
+        $connectedHandler = function ($command, $info) use ($promise) {
+            $this->state = self::STATE_AUTH_SUCCEEDED;
+            $this->serverInfo = $info;
+            return $promise->resolve($info);
+        };
 
-                    $stream->on('error', [ $this, 'handleConnectionError' ]);
-                    $stream->on('close', [ $this, 'handleConnectionClosed' ]);
+        $this
+            ->connect()
+            ->then(function($stream) use ($config, $errorHandler, $connectedHandler) {
+                $this->stream = $stream;
 
-                    $parser = $this->parser = new ProtocolParser($stream, $this->executor);
+                $stream->on('error', [ $this, 'handleSocketError' ]);
+                $stream->on('close', [ $this, 'handleSocketClose' ]);
 
-                    $parser->setOptions($options);
+                $this->state  = self::STATE_AUTH_PENDING;
+                $this->parser = new ProtocolParser($stream, $this->queue, $config);
 
-                    $command = $this->doCommand(new AuthCommand($this));
-                    $command->on('authenticated', $connectedHandler);
-                    $command->on('error', $errorHandler);
+                $command = $this->doAuth(new AuthCommand($this));
+                $command->on('success', $connectedHandler);
+                $command->on('error', $errorHandler);
 
-                    //$parser->on('close', $closeHandler);
-                    $parser->start();
+                //$parser->on('close', $closeHandler);
+                $this->parser->start();
+            })
+            ->done(null, [ $this, 'handleError' ]);
 
-                }, [ $this, 'handleConnectionError' ]);
-        });
+        return $promise;
     }
 
     /**
@@ -157,159 +209,217 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      */
     public function stop()
     {
+        if (!$this->isStarted())
+        {
+            return Promise::doResolve($this);
+        }
         return new Promise(function($resolve, $reject) {
             $this
                 ->doCommand(new QuitCommand($this))
                 ->on('success', function() use($resolve) {
-                    $this->state = self::STATE_STOPPED;
-                    $this->emit('end', [ $this ]);
-                    $this->emit('close', [ $this ]);
+                    $this->state = self::STATE_DISCONNECT_SUCCEEDED;
+                    $this->emit('stop', [ $this ]);
                     $resolve($this);
                 });
-            $this->state = self::STATE_CLOSEING;
+            $this->state = self::STATE_DISCONNECT_PENDING;
         });
     }
 
     /**
-     * Do a async query.
-     *
-     * @param string $sql
-     * @param mixed[] $sqlParams
-     * @return PromiseInterface
+     * @override
+     * @inheritDoc
      */
-    public function query($sql, $sqlParams = [])
-    {
-        $promise = new Promise();
-        $query   = new Query($sql);
-        $command = new QueryCommand($this);
-
-        $command->setQuery($query);
-        $query->bindParamsFromArray($sqlParams);
-
-        $this->doCommand($command);
-
-        $command->on('results', function ($rows, $command) use ($promise) {
-            return $command->hasError() ? $promise->reject($command->getError()) : $promise->resolve($command);
-        });
-        $command->on('error', function ($err, $command) use ($promise) {
-            return $promise->reject($err);
-        });
-        $command->on('success', function ($command) use ($promise) {
-            return $command->hasError() ? $promise->reject($command->getError()) : $promise->resolve($command);
-        });
-
-        return $promise;
-    }
-
-    public function execute($sql, $sqlParams = [])
-    {
-        // TODO
-    }
-
-    public function ping()
-    {
-        $promise = new Promise();
-
-        $this->doCommand(new PingCommand($this))
-            ->on('error', function ($reason) use ($promise) {
-                return $promise->reject($reason);
-            })
-            ->on('success', function () use ($promise) {
-                return $promise->resolve();
-            });
-    }
-
-    public function beginTransaction()
-    {
-        return $this->trans->enqueue(new Transaction($this));
-    }
-
-    public function endTransaction(TransactionInterface $trans)
-    {
-        // TODO
-    }
-
-    public function inTransaction()
-    {
-        return !$this->trans->isEmpty();
-    }
-
-    public function selectDB($dbname)
-    {
-        return $this->query(sprintf('USE `%s`', $dbname));
-    }
-
-    public function setOption($name, $value)
-    {
-        $this->config[$name] = $value;
-
-        return $this;
-    }
-
-    public function getOption($name, $default = null)
-    {
-        if (isset($this->config[$name]))
-        {
-            return $this->config[$name];
-        }
-
-        return $default;
-    }
-
     public function getState()
     {
         return $this->state;
     }
 
-    public function handleConnectionError($err)
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function getInfo()
     {
-        $this->emit('error', [ $err, $this ]);
-    }
-
-    public function handleConnectionClosed()
-    {
-        if ($this->state < self::STATE_CLOSEING)
-        {
-            $this->state = self::STATE_STOPPED;
-            $this->emit('error', [ new RuntimeException('mysql server has gone away'), $this ]);
-        }
-    }
-
-    protected function doCommand(CommandInterface $command)
-    {
-        if ($command->equals(Command::INIT_AUTHENTICATE))
-        {
-            return $this->executor->undequeue($command);
-        }
-        elseif ($this->state >= self::STATE_CONNECT_PENDING && $this->state <= self::STATE_AUTH_SUCCEEDED)
-        {
-            return $this->executor->enqueue($command);
-        }
-        else
-        {
-            throw new Exception("Cann't send command");
-        }
-    }
-
-    public function getServerOptions()
-    {
-        return $this->serverOptions;
-    }
-
-    protected function connect()
-    {
-        $socket = new Socket($this->config['endpoint'], $this->getLoop());
-        return Promise::doResolve($socket);
+        return $this->serverInfo;
     }
 
     /**
-     * Create executor.
-     *
-     * @return Executor
+     * @override
+     * @inheritDoc
      */
-    protected function createExecutor()
+    public function setDatabase($dbname)
     {
-        return new Executor($this);
+        return $this->query(sprintf('USE `%s`', $dbname));
+    }
+
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function getDatabase()
+    {
+        // TODO
+    }
+
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function query($sql, $sqlParams = [])
+    {
+        $promise = new Promise();
+        $query   = new Query($sql, $sqlParams);
+        $command = new QueryCommand($this, $query);
+
+        $this->doCommand($command);
+
+        $command->on('error', function ($command, $err) use ($promise) {
+            return $promise->reject($err);
+        });
+        $command->on('success', function ($command) use ($promise) {
+            return $promise->resolve($command);
+        });
+
+        return $promise;
+    }
+
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function execute($sql, $sqlParams = [])
+    {
+        return $this->query($sql, $sqlParams)->then(function($command) {
+            return $command->affectedRows;
+        });
+    }
+
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function ping()
+    {
+        $promise = new Promise();
+
+        $command = $this->doCommand(new PingCommand($this));
+        $command->on('error', function ($command, $reason) use ($promise) {
+            return $promise->reject($reason);
+        });
+        $command->on('success', function () use ($promise) {
+            return $promise->resolve();
+        });
+
+        return $promise;
+    }
+
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function beginTransaction()
+    {
+        return $this->trans->enqueue(new Transaction($this));
+    }
+
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function endTransaction(TransactionInterface $trans)
+    {
+        // TODO
+    }
+
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function inTransaction()
+    {
+        return !$this->trans->isEmpty();
+    }
+
+    /**
+     * @internal
+     */
+    public function handleError($err)
+    {
+        $this->emit('error', [ $this, $err ]);
+    }
+
+    /**
+     * @internal
+     */
+    public function handleSocketError($socket, $err)
+    {
+        $this->emit('error', [ $this, $err ]);
+    }
+
+    /**
+     * @internal
+     */
+    public function handleSocketClose()
+    {
+        if ($this->state < self::STATE_DISCONNECT_PENDING)
+        {
+            $this->state = self::STATE_DISCONNECT_SUCCEEDED;
+            $this->emit('error', [ $this, new RuntimeException('MySQL server has gone away!') ]);
+        }
+    }
+
+    /**
+     * Do auth command.
+     *
+     * @param CommandInterface $command
+     * @return CommandInterface
+     * @throws ExecutionException
+     */
+    protected function doAuth(CommandInterface $command)
+    {
+        if ($command->equals(Command::INIT_AUTHENTICATE))
+        {
+            return $this->queue->unshift($command);
+        }
+        throw new ExecutionException("Cann't send command");
+    }
+
+    /**
+     * Do command.
+     *
+     * @param CommandInterface $command
+     * @return CommandInterface
+     * @throws ExecutionException
+     */
+    protected function doCommand(CommandInterface $command)
+    {
+        if ($this->state >= self::STATE_CONNECT_PENDING && $this->state <= self::STATE_AUTH_SUCCEEDED)
+        {
+            return $this->queue->enqueue($command);
+        }
+        throw new ExecutionException("Cann't send command");
+    }
+
+    /**
+     * Connect to the database endpoint.
+     *
+     * @return PromiseInterface
+     */
+    protected function connect()
+    {
+        return Promise::doResolve(
+            new Socket($this->config['endpoint'], $this->getLoop())
+        );
+    }
+
+    /**
+     * Create Queue.
+     *
+     * @return Queue|QueueInterface
+     */
+    protected function createQueue()
+    {
+        return new Queue();
     }
 
     /**

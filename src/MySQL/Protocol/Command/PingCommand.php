@@ -7,27 +7,7 @@ use Dazzle\MySQL\Protocol\Command;
 class PingCommand extends Command
 {
     /**
-     * @override
-     * @inheritDoc
+     * @var int
      */
-    public function getID()
-    {
-        return self::PING;
-    }
-
-    /**
-     * @override
-     * @inheritDoc
-     */
-    public function buildPacket()
-    {}
-
-    /**
-     * @override
-     * @inheritDoc
-     */
-    public function getSql()
-    {
-        return '';
-    }
+    protected $id = self::PING;
 }

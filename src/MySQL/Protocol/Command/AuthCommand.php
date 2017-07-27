@@ -7,18 +7,7 @@ use Dazzle\MySQL\Protocol\Command;
 class AuthCommand extends Command
 {
     /**
-     * @override
-     * @inheritDoc
+     * @var int
      */
-    public function getID()
-    {
-        return self::INIT_AUTHENTICATE;
-    }
-
-    /**
-     * @override
-     * @inheritDoc
-     */
-    public function buildPacket()
-    {}
+    protected $id = self::INIT_AUTHENTICATE;
 }

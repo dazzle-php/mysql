@@ -2,7 +2,7 @@
 
 namespace Dazzle\MySQL\Protocol;
 
-class Protocol
+abstract class Protocol
 {
     /**
      * new more secure passwords.

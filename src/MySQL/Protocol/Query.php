@@ -1,6 +1,8 @@
 <?php
 
-namespace Dazzle\MySQL;
+namespace Dazzle\MySQL\Protocol;
+
+use Dazzle\Throwable\Exception\LogicException;
 
 class Query implements QueryInterface
 {
@@ -22,7 +24,7 @@ class Query implements QueryInterface
     /**
      * @var string[]
      */
-    protected $escapeChars = [
+    private $escapeChars = [
         "\x00" => "\\0",
         "\r"   => "\\r",
         "\n"   => "\\n",
@@ -34,42 +36,63 @@ class Query implements QueryInterface
 
     /**
      * @param string $sql
+     * @param mixed[] $sqlParams
      */
-    public function __construct($sql)
+    public function __construct($sql, $sqlParams = [])
     {
         $this->sql = $sql;
-        $this->sqlPrepared = '';
+        $this->sqlPrepared = null;
+        $this->params = $sqlParams;
     }
 
     /**
-     * Binding params for the query, mutiple arguments support.
-     *
-     * @param  mixed              $param
-     * @return Query
+     * @override
+     * @inheritDoc
      */
-    public function bindParams()
+    public function bindParams(...$args)
     {
         $this->sqlPrepared = null;
-        $this->params   = func_get_args();
+        $this->params = $args;
 
         return $this;
     }
 
-    public function bindParamsFromArray(array $params)
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function bindParamsFromArray(array $params = [])
     {
         $this->sqlPrepared = null;
-        $this->params   = $params;
+        $this->params = $params;
 
         return $this;
     }
 
-    public function escape($str)
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function getSQL()
+    {
+        return $this->sqlPrepared === null ? $this->buildSQL() : $this->sqlPrepared;
+    }
+
+    /**
+     * Escape string.
+     *
+     * @param string $str
+     * @return string
+     */
+    protected function escape($str)
     {
         return strtr($str, $this->escapeChars);
     }
 
     /**
-     * @param  mixed  $value
+     * Resolve value for SQL.
+     *
+     * @param  mixed $value
      * @return string
      */
     protected function resolveValueForSql($value)
@@ -105,7 +128,13 @@ class Query implements QueryInterface
         return $value;
     }
 
-    protected function buildSql()
+    /**
+     * Build sql query replacing and escaping characters.
+     *
+     * @return string
+     * @throws LogicException
+     */
+    protected function buildSQL()
     {
         $sql = $this->sql;
         $offset = strpos($sql, '?');
@@ -119,24 +148,9 @@ class Query implements QueryInterface
 
         if ($offset !== false)
         {
-            throw new \LogicException('Params not enough to build sql');
+            throw new LogicException('Params not enough to build valid SQL!');
         }
 
         return $sql;
-    }
-
-    /**
-     * Get the constructed and escaped sql string.
-     *
-     * @return string
-     */
-    public function getSql()
-    {
-        if ($this->sqlPrepared === null)
-        {
-            $this->sqlPrepared = $this->buildSql();
-        }
-
-        return $this->sqlPrepared;
     }
 }

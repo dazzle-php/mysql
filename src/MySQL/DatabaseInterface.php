@@ -9,6 +9,13 @@ use Dazzle\Promise\PromiseInterface;
 interface DatabaseInterface extends SQLInterface, LoopResourceInterface, EventEmitterInterface
 {
     /**
+     * Find out if the database has been started.
+     *
+     * @return bool
+     */
+    public function isStarted();
+
+    /**
      * Start the MySQL connection.
      *
      * @return PromiseInterface
@@ -21,6 +28,35 @@ interface DatabaseInterface extends SQLInterface, LoopResourceInterface, EventEm
      * @return PromiseInterface
      */
     public function stop();
+
+    /**
+     * Get state of MySQL connection.
+     *
+     * @return int
+     */
+    public function getState();
+
+    /**
+     * Get server info.
+     *
+     * @return mixed[]
+     */
+    public function getInfo();
+
+    /**
+     * Set current database.
+     *
+     * @param string $dbname
+     * @return PromiseInterface
+     */
+    public function setDatabase($dbname);
+
+    /**
+     * Get current database
+     *
+     * @return PromiseInterface
+     */
+    public function getDatabase();
 
     /**
      * Create and being an new transaction.

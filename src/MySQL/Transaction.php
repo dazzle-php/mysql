@@ -5,6 +5,8 @@ namespace Dazzle\MySQL;
 use Dazzle\Event\BaseEventEmitter;
 use Dazzle\MySQL\Protocol\Command\QueryCommand;
 use Dazzle\MySQL\Protocol\CommandInterface;
+use Dazzle\MySQL\Protocol\Query;
+use Dazzle\MySQL\Protocol\QueryInterface;
 use Dazzle\Promise\Promise;
 use Dazzle\Throwable\Exception\Runtime\ExecutionException;
 
@@ -56,24 +58,14 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
         }
 
         $promise = new Promise();
-        $query   = new Query($sql);
-        $command = new QueryCommand($this->database);
+        $query   = new Query($sql, $sqlParams);
+        $command = new QueryCommand($this->database, $query);
 
-        $command->setQuery($query);
-        $query->bindParamsFromArray($sqlParams);
-
-        $command->on('results', function ($rows, $command) use ($promise) {
-            return $command->hasError()
-                ? $promise->reject($command->getError())
-                : $promise->resolve($command);
-        });
-        $command->on('error', function ($err, $command) use ($promise) {
+        $command->on('error', function ($command, $err) use ($promise) {
             return $promise->reject($err);
         });
         $command->on('success', function ($command) use ($promise) {
-            return $command->hasError()
-                ? $promise->reject($command->getError())
-                : $promise->resolve($command);
+            return $promise->resolve($command);
         });
 
         $this->commands[] = $command;

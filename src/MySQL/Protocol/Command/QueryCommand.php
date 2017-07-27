@@ -3,45 +3,45 @@
 namespace Dazzle\MySQL\Protocol\Command;
 
 use Dazzle\MySQL\Protocol\Command;
-use Dazzle\MySQL\Query;
+use Dazzle\MySQL\Protocol\QueryInterface;
+use Dazzle\MySQL\SQLQueryInterface;
 
-class QueryCommand extends Command
+class QueryCommand extends Command implements SQLQueryInterface
 {
     public $query;
     public $fields;
     public $insertId;
     public $affectedRows;
 
-    public function getID()
+    /**
+     * @var int
+     */
+    protected $id = self::QUERY;
+
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function getSQL()
     {
-        return self::QUERY;
+        return ($this->context instanceof QueryInterface) ? $this->context->getSQL() : $this->context;
     }
 
-    public function getQuery()
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function getRows()
     {
-        return $this->query;
+        return $this->resultRows;
     }
 
-    public function setQuery($query)
+    /**
+     * @override
+     * @inheritDoc
+     */
+    public function getFields()
     {
-        if (! $query instanceof Query)
-        {
-            $query = new Query($query);
-        }
-        $this->query = $query;
+        return $this->resultFields;
     }
-
-    public function getSql()
-    {
-        $query = $this->query;
-
-        if ($query instanceof Query)
-        {
-            return $query->getSql();
-        }
-        return $query;
-    }
-
-    public function buildPacket()
-    {}
 }

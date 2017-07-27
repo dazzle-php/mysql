@@ -6,16 +6,8 @@ use Dazzle\MySQL\Protocol\Command;
 
 class QuitCommand extends Command
 {
-    public function getID()
-    {
-        return self::QUIT;
-    }
-
-    public function buildPacket()
-    {}
-
-    public function getSql()
-    {
-        return '';
-    }
+    /**
+     * @var int
+     */
+    protected $id = self::QUIT;
 }

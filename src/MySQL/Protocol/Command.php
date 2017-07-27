@@ -4,6 +4,8 @@ namespace Dazzle\MySQL\Protocol;
 
 use Dazzle\Event\BaseEventEmitter;
 use Dazzle\MySQL\DatabaseInterface;
+use Error;
+use Exception;
 
 abstract class Command extends BaseEventEmitter implements CommandInterface
 {
@@ -217,39 +219,73 @@ abstract class Command extends BaseEventEmitter implements CommandInterface
      */
     const INIT_AUTHENTICATE = 0xf1;
 
+    /**
+     * @var int
+     */
+    protected $id = -1;
+
+    /**
+     * @var DatabaseInterface
+     */
     protected $database;
 
-    private $states = [];
+    /**
+     * @var mixed[]
+     */
+    protected $states;
 
-    private $error;
+    /**
+     * @var Error|Exception
+     */
+    protected $error;
 
-    public function __construct(DatabaseInterface $database)
+    /**
+     * @var mixed
+     */
+    protected $context;
+
+    /**
+     * @param DatabaseInterface $database
+     * @param mixed|null $context
+     */
+    public function __construct(DatabaseInterface $database, $context = null)
     {
         $this->database = $database;
+        $this->states = [];
+        $this->error = null;
+        $this->context = $context;
     }
+
+    public function getID()
+    {
+        return $this->id;
+    }
+
+    public function getSQL()
+    {
+        return '';
+    }
+
+    public function buildPacket()
+    {}
 
     public function getState($name, $default = null)
     {
-        if (isset($this->states[$name]))
-        {
-            return $this->states[$name];
-        }
-        return $default;
+        return isset($this->states[$name]) ? $this->states[$name] : $default;
     }
 
     public function setState($name, $value)
     {
         $this->states[$name] = $value;
-
         return $this;
     }
 
     public function equals($commandId)
     {
-        return $this->getID() === $commandId;
+        return $this->id === $commandId;
     }
 
-    public function setError(\Exception $error)
+    public function setError($error)
     {
         $this->error = $error;
     }
@@ -261,7 +297,7 @@ abstract class Command extends BaseEventEmitter implements CommandInterface
 
     public function hasError()
     {
-        return (boolean) $this->error;
+        return $this->error !== null;
     }
 
     public function getConnection()
