@@ -4,7 +4,7 @@ namespace Dazzle\MySQL;
 
 use Dazzle\Event\EventEmitterInterface;
 
-interface TransactionInterface extends SQLInterface, EventEmitterInterface
+interface TransactionInterface extends SQLClientInterface, EventEmitterInterface
 {
     public function isOpen();
 

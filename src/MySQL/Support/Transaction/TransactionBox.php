@@ -3,21 +3,21 @@
 namespace Dazzle\MySQL\Support\Transaction;
 
 use Dazzle\MySQL\TransactionInterface;
-use SplQueue;
+use SplObjectStorage;
 
 class TransactionBox implements TransactionBoxInterface
 {
     /**
-     * @var SplQueue
+     * @var SplObjectStorage
      */
-    protected $queue;
+    protected $collection;
 
     /**
      *
      */
     public function __construct()
     {
-        $this->queue = new SplQueue;
+        $this->collection = new SplObjectStorage();
     }
 
     /**
@@ -26,16 +26,16 @@ class TransactionBox implements TransactionBoxInterface
      */
     public function isEmpty()
     {
-        return $this->queue->isEmpty();
+        return $this->collection->count() <= 0;
     }
 
     /**
      * @override
      * @inheritDoc
      */
-    public function enqueue(TransactionInterface $trans)
+    public function add(TransactionInterface $trans)
     {
-        $this->queue->enqueue($trans);
+        $this->collection->attach($trans);
         return $trans;
     }
 
@@ -43,8 +43,9 @@ class TransactionBox implements TransactionBoxInterface
      * @override
      * @inheritDoc
      */
-    public function dequeue()
+    public function remove(TransactionInterface $trans)
     {
-        return $this->queue->dequeue();
+        $this->collection->detach($trans);
+        return $trans;
     }
 }

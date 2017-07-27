@@ -410,7 +410,7 @@ field:
 
     protected function handleClose()
     {
-        $this->emit('close');
+        $this->emit('close'); // TODO ??
         if ($this->queue->count())
         {
             $command = $this->queue->dequeue();

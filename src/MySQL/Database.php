@@ -24,6 +24,7 @@ use Dazzle\Socket\Socket;
 use Dazzle\Socket\SocketInterface;
 use Dazzle\Throwable\Exception\Runtime\ExecutionException;
 use RuntimeException;
+use SplQueue;
 
 class Database extends BaseEventEmitter implements DatabaseInterface
 {
@@ -94,11 +95,20 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      */
     protected $queue;
 
+    /**
+     * @var ProtocolParser|null
+     */
     protected $parser;
 
+    /**
+     * @var SocketInterface|null
+     */
     protected $stream;
 
-    protected $trans;
+    /**
+     * @var TransactionBoxInterface
+     */
+    protected $transBox;
 
     /**
      * @param LoopInterface $loop
@@ -113,7 +123,7 @@ class Database extends BaseEventEmitter implements DatabaseInterface
         $this->queue = $this->createQueue();
         $this->parser = null;
         $this->stream = null;
-        $this->trans = $this->createTransactionBox();
+        $this->transBox = $this->createTransactionBox();
     }
 
     /**
@@ -195,7 +205,6 @@ class Database extends BaseEventEmitter implements DatabaseInterface
                 $command->on('success', $connectedHandler);
                 $command->on('error', $errorHandler);
 
-                //$parser->on('close', $closeHandler);
                 $this->parser->start();
             })
             ->done(null, [ $this, 'handleError' ]);
@@ -319,7 +328,24 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      */
     public function beginTransaction()
     {
-        return $this->trans->enqueue(new Transaction($this));
+        $trans = new Transaction($this);
+
+        $trans->on('commit', function(TransactionInterface $trans, SplQueue $queue) {
+            $this->commitTransaction($queue)->then(
+                function() use($trans) {
+                    return $trans->emit('success', [ $trans ]);
+                },
+                function($ex) use($trans) {
+                    return $trans->emit('error', [ $trans, $ex ]);
+                }
+            );
+            $this->transBox->remove($trans);
+        });
+        $trans->on('rollback', function(TransactionInterface $trans) {
+            $this->transBox->remove($trans);
+        });
+
+        return $this->transBox->add($trans);
     }
 
     /**
@@ -328,7 +354,52 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      */
     public function endTransaction(TransactionInterface $trans)
     {
-        // TODO
+        return $trans->rollback();
+    }
+
+    /**
+     * Try to commit a transaction.
+     *
+     * @param SplQueue $queue
+     * @return PromiseInterface
+     */
+    protected function commitTransaction(SplQueue $queue)
+    {
+        $promise = new Promise();
+        $ex = null;
+
+        $queue->unshift(new QueryCommand($this, new Query('BEGIN')));
+        $queue->unshift(new QueryCommand($this, new Query('START TRANSACTION')));
+
+        $size = 0;
+        $sizeCap = $queue->count();
+
+        while (!$queue->isEmpty())
+        {
+            $command = $this->doCommand($queue->dequeue());
+            $command->on('error', function($command, $err) use(&$ex, $promise) {
+                if ($ex === null)
+                {
+                    $ex = $err;
+                    $this->doCommand(new QueryCommand($this, new Query('ROLLBACK')));
+                    $promise->reject($ex);
+                }
+            });
+            $command->on('success', function() use (&$size, &$sizeCap, $promise) {
+                if (++$size >= $sizeCap)
+                {
+                    $commit = $this->doCommand(new QueryCommand($this, new Query('COMMIT')));
+                    $commit->on('success', function() use($promise) {
+                        return $promise->resolve();
+                    });
+                    $commit->on('error', function($command, $err) use($promise) {
+                        return $promise->reject($err);
+                    });
+                }
+            });
+        }
+
+        return $promise;
     }
 
     /**
@@ -337,7 +408,7 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      */
     public function inTransaction()
     {
-        return !$this->trans->isEmpty();
+        return !$this->transBox->isEmpty();
     }
 
     /**
@@ -391,7 +462,7 @@ class Database extends BaseEventEmitter implements DatabaseInterface
      * @return CommandInterface
      * @throws ExecutionException
      */
-    protected function doCommand(CommandInterface $command)
+    protected function doCommand($command)
     {
         if ($this->state >= self::STATE_CONNECT_PENDING && $this->state <= self::STATE_AUTH_SUCCEEDED)
         {

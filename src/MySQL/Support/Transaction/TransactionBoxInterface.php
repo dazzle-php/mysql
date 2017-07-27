@@ -8,7 +8,7 @@ interface TransactionBoxInterface
 {
     public function isEmpty();
 
-    public function enqueue(TransactionInterface $trans);
+    public function add(TransactionInterface $trans);
 
-    public function dequeue();
+    public function remove(TransactionInterface $trans);
 }

@@ -9,6 +9,7 @@ use Dazzle\MySQL\Protocol\Query;
 use Dazzle\MySQL\Protocol\QueryInterface;
 use Dazzle\Promise\Promise;
 use Dazzle\Throwable\Exception\Runtime\ExecutionException;
+use SplQueue;
 
 class Transaction extends BaseEventEmitter implements TransactionInterface
 {
@@ -18,9 +19,9 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
     protected $database;
 
     /**
-     * @var CommandInterface[]
+     * @var SplQueue|null
      */
-    protected $commands;
+    protected $queue;
 
     /**
      * @var bool
@@ -33,7 +34,7 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
     public function __construct(DatabaseInterface $database)
     {
         $this->database = $database;
-        $this->commands = [];
+        $this->queue = new SplQueue;
         $this->open = true;
     }
 
@@ -61,14 +62,14 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
         $query   = new Query($sql, $sqlParams);
         $command = new QueryCommand($this->database, $query);
 
-        $command->on('error', function ($command, $err) use ($promise) {
+        $this->on('error', function ($trans, $err) use ($promise) {
             return $promise->reject($err);
         });
-        $command->on('success', function ($command) use ($promise) {
+        $this->on('success', function ($trans) use ($promise, $command) {
             return $promise->resolve($command);
         });
 
-        $this->commands[] = $command;
+        $this->queue->enqueue($command);
 
         return $promise;
     }
@@ -79,11 +80,6 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
      */
     public function execute($sql, $sqlParams = [])
     {
-        if (!$this->isOpen())
-        {
-            return Promise::doReject(new ExecutionException('This transaction is no longer open.'));
-        }
-
         // TODO: Implement execute() method.
     }
 
@@ -93,8 +89,25 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
      */
     public function commit()
     {
+        if (!$this->isOpen())
+        {
+            return Promise::doReject(new ExecutionException('This transaction is no longer open.'));
+        }
+
+        $promise = new Promise();
         $this->open = false;
-        $this->emit('commit');
+
+        $this->on('error', function ($trans, $err) use ($promise) {
+            return $promise->reject($err);
+        });
+        $this->on('success', function ($trans) use ($promise) {
+            return $promise->resolve();
+        });
+
+        $this->emit('commit', [ $this, $this->queue ]);
+        $this->queue = null;
+
+        return $promise;
     }
 
     /**
@@ -103,7 +116,15 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
      */
     public function rollback()
     {
+        if (!$this->isOpen())
+        {
+            return Promise::doReject(new ExecutionException('This transaction is no longer open.'));
+        }
+
         $this->open = false;
-        $this->emit('rollback');
+        $this->emit('rollback', [ $this ]);
+        $this->queue = null;
+
+        return Promise::doResolve();
     }
 }
