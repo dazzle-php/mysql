@@ -8,6 +8,7 @@ use Dazzle\MySQL\Protocol\CommandInterface;
 use Dazzle\MySQL\Protocol\Query;
 use Dazzle\MySQL\Protocol\QueryInterface;
 use Dazzle\Promise\Promise;
+use Dazzle\Promise\PromiseInterface;
 use Dazzle\Throwable\Exception\Runtime\ExecutionException;
 use SplQueue;
 
@@ -19,7 +20,7 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
     protected $database;
 
     /**
-     * @var SplQueue|null
+     * @var CommandInterface[]
      */
     protected $queue;
 
@@ -34,7 +35,7 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
     public function __construct(DatabaseInterface $database)
     {
         $this->database = $database;
-        $this->queue = new SplQueue;
+        $this->queue = [];
         $this->open = true;
     }
 
@@ -69,7 +70,7 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
             return $promise->resolve($command);
         });
 
-        $this->queue->enqueue($command);
+        $this->queue[] = $command;
 
         return $promise;
     }
@@ -95,7 +96,6 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
         }
 
         $promise = new Promise();
-        $this->open = false;
 
         $this->on('error', function ($trans, $err) use ($promise) {
             return $promise->reject($err);
@@ -104,8 +104,9 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
             return $promise->resolve();
         });
 
+        $this->open = false;
         $this->emit('commit', [ $this, $this->queue ]);
-        $this->queue = null;
+        $this->queue = [];
 
         return $promise;
     }
@@ -123,7 +124,7 @@ class Transaction extends BaseEventEmitter implements TransactionInterface
 
         $this->open = false;
         $this->emit('rollback', [ $this ]);
-        $this->queue = null;
+        $this->queue = [];
 
         return Promise::doResolve();
     }

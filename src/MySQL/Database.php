@@ -330,7 +330,7 @@ class Database extends BaseEventEmitter implements DatabaseInterface
     {
         $trans = new Transaction($this);
 
-        $trans->on('commit', function(TransactionInterface $trans, SplQueue $queue) {
+        $trans->on('commit', function(TransactionInterface $trans, array $queue) {
             $this->commitTransaction($queue)->then(
                 function() use($trans) {
                     return $trans->emit('success', [ $trans ]);
@@ -360,23 +360,23 @@ class Database extends BaseEventEmitter implements DatabaseInterface
     /**
      * Try to commit a transaction.
      *
-     * @param SplQueue $queue
+     * @param CommandInterface[] $queue
      * @return PromiseInterface
      */
-    protected function commitTransaction(SplQueue $queue)
+    protected function commitTransaction($queue)
     {
         $promise = new Promise();
         $ex = null;
 
-        $queue->unshift(new QueryCommand($this, new Query('BEGIN')));
-        $queue->unshift(new QueryCommand($this, new Query('START TRANSACTION')));
+        array_unshift($queue, new QueryCommand($this, new Query('BEGIN')));
+        array_unshift($queue, new QueryCommand($this, new Query('START TRANSACTION')));
 
         $size = 0;
-        $sizeCap = $queue->count();
+        $sizeCap = count($queue);
 
-        while (!$queue->isEmpty())
+        for ($i=0; $i<$sizeCap; $i++)
         {
-            $command = $this->doCommand($queue->dequeue());
+            $command = $this->doCommand($queue[$i]);
             $command->on('error', function($command, $err) use(&$ex, $promise) {
                 if ($ex === null)
                 {
