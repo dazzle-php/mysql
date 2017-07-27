@@ -137,18 +137,13 @@ class Query implements QueryInterface
     protected function buildSQL()
     {
         $sql = $this->sql;
-        $offset = strpos($sql, '?');
+        $keys = array_map(function($key) { return is_numeric($key) ? '\?' : $key; }, array_keys($this->params));
+        $params = array_values($this->params);
+        $size = count($params);
 
-        foreach ($this->params as $param)
+        for ($i=0; $i<$size; $i++)
         {
-            $replacement = $this->resolveValueForSql($param);
-            $sql = substr_replace($sql, $replacement, $offset, 1);
-            $offset = strpos($sql, '?', $offset + strlen($replacement));
-        }
-
-        if ($offset !== false)
-        {
-            throw new LogicException('Params not enough to build valid SQL!');
+            $sql = preg_replace('#' . $keys[$i] . '#', $this->resolveValueForSql($params[$i]), $sql, 1);
         }
 
         return $sql;
