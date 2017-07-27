@@ -1,6 +1,6 @@
 <?php
 
-namespace Dazzle\MySQL\Driver;
+namespace Dazzle\MySQL\Protocol;
 
 use Dazzle\Event\BaseEventEmitter;
 use Dazzle\MySQL\DatabaseInterface;

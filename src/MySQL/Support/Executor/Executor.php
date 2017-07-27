@@ -1,6 +1,6 @@
 <?php
 
-namespace Dazzle\MySQL\Driver;
+namespace Dazzle\MySQL\Support\Executor;
 
 use Dazzle\Event\BaseEventEmitter;
 use SplQueue;

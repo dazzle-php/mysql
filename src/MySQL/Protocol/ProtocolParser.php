@@ -4,9 +4,9 @@ namespace Dazzle\MySQL\Protocol;
 
 use BinPHP\BinSupport;
 use Dazzle\Event\BaseEventEmitter;
-use Dazzle\MySQL\Driver\Command;
-use Dazzle\MySQL\Driver\CommandInterface;
-use Dazzle\MySQL\Driver\Executor;
+use Dazzle\MySQL\Protocol\Command;
+use Dazzle\MySQL\Protocol\CommandInterface;
+use Dazzle\MySQL\Support\Executor\Executor;
 use Dazzle\Stream\StreamInterface;
 use Exception;
 

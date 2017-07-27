@@ -5,14 +5,16 @@ namespace Dazzle\MySQL;
 use Dazzle\Event\BaseEventEmitter;
 use Dazzle\Loop\LoopAwareTrait;
 use Dazzle\Loop\LoopInterface;
-use Dazzle\MySQL\Driver\Command\AuthCommand;
-use Dazzle\MySQL\Driver\Command\PingCommand;
-use Dazzle\MySQL\Driver\Command\QueryCommand;
-use Dazzle\MySQL\Driver\Command\QuitCommand;
-use Dazzle\MySQL\Driver\Command;
-use Dazzle\MySQL\Driver\CommandInterface;
-use Dazzle\MySQL\Driver\Executor;
+use Dazzle\MySQL\Protocol\Command\AuthCommand;
+use Dazzle\MySQL\Protocol\Command\PingCommand;
+use Dazzle\MySQL\Protocol\Command\QueryCommand;
+use Dazzle\MySQL\Protocol\Command\QuitCommand;
+use Dazzle\MySQL\Protocol\Command;
+use Dazzle\MySQL\Protocol\CommandInterface;
 use Dazzle\MySQL\Protocol\ProtocolParser;
+use Dazzle\MySQL\Support\Executor\Executor;
+use Dazzle\MySQL\Support\Transaction\TransactionBox;
+use Dazzle\MySQL\Support\Transaction\TransactionBoxInterface;
 use Dazzle\Promise\Promise;
 use Dazzle\Promise\PromiseInterface;
 use Dazzle\Socket\Socket;
@@ -39,13 +41,17 @@ class Database extends BaseEventEmitter implements DatabaseInterface
 
     protected $serverOptions;
 
+    protected $state;
+
+    protected $mode;
+
     protected $executor;
 
-    protected $state = self::STATE_INIT;
+    protected $parser;
 
     protected $stream;
 
-    protected $parser;
+    protected $trans;
 
     /**
      * @param LoopInterface $loop
@@ -54,8 +60,13 @@ class Database extends BaseEventEmitter implements DatabaseInterface
     public function __construct(LoopInterface $loop, $config = [])
     {
         $this->loop = $loop;
-        $this->executor = $this->createExecutor();
         $this->config = $this->createConfig($config);
+        $this->serverOptions = [];
+        $this->state = self::STATE_INIT;
+        $this->executor = $this->createExecutor();
+        $this->parser = null;
+        $this->stream = null;
+        $this->trans = $this->createTransactionBox();
     }
 
     /**
@@ -171,26 +182,28 @@ class Database extends BaseEventEmitter implements DatabaseInterface
         $promise = new Promise();
         $query   = new Query($sql);
         $command = new QueryCommand($this);
-        $command->setQuery($query);
 
+        $command->setQuery($query);
         $query->bindParamsFromArray($sqlParams);
+
         $this->doCommand($command);
 
         $command->on('results', function ($rows, $command) use ($promise) {
-            return $command->hasError()
-                ? $promise->reject($command->getError())
-                : $promise->resolve($command);
+            return $command->hasError() ? $promise->reject($command->getError()) : $promise->resolve($command);
         });
         $command->on('error', function ($err, $command) use ($promise) {
             return $promise->reject($err);
         });
         $command->on('success', function ($command) use ($promise) {
-            return $command->hasError()
-                ? $promise->reject($command->getError())
-                : $promise->resolve($command);
+            return $command->hasError() ? $promise->reject($command->getError()) : $promise->resolve($command);
         });
 
         return $promise;
+    }
+
+    public function execute($sql, $sqlParams = [])
+    {
+        // TODO
     }
 
     public function ping()
@@ -204,6 +217,21 @@ class Database extends BaseEventEmitter implements DatabaseInterface
             ->on('success', function () use ($promise) {
                 return $promise->resolve();
             });
+    }
+
+    public function beginTransaction()
+    {
+        return $this->trans->enqueue(new Transaction($this));
+    }
+
+    public function endTransaction(TransactionInterface $trans)
+    {
+        // TODO
+    }
+
+    public function inTransaction()
+    {
+        return !$this->trans->isEmpty();
     }
 
     public function selectDB($dbname)
@@ -282,6 +310,16 @@ class Database extends BaseEventEmitter implements DatabaseInterface
     protected function createExecutor()
     {
         return new Executor($this);
+    }
+
+    /**
+     * Create transaction box.
+     *
+     * @return TransactionBoxInterface
+     */
+    protected function createTransactionBox()
+    {
+        return new TransactionBox();
     }
 
     /**
